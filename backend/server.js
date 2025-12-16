@@ -18,17 +18,19 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// Puertos/URIs básicos de servicio
 const puertoHttp = Number(process.env.PORT) || 3000;
 const puertoWs = Number(process.env.WS_PORT) || 1883;
 const mongoUri =
   process.env.MONGO_URI || "mongodb://mongo:27017/dispensador_db";
 const mqttUrl = process.env.MQTT_URL || "mqtt://test.mosquitto.org";
-const mqttTopicEventos = process.env.MQTT_TOPIC_EVENTS || "dispensador/events";
-const mqttTopicComandos =
-  process.env.MQTT_TOPIC_COMMANDS || "dispensador/commands";
+// Topics MQTT alineados con el firmware Wokwi
+const mqttTopicEventos = process.env.MQTT_TOPIC_EVENTS || "/TX_ESLI"; // eventos publicados por el ESP32
+const mqttTopicComandos = process.env.MQTT_TOPIC_COMMANDS || "/RX_ESLI"; // comandos hacia el ESP32
 
 app.locals.configActual = { modo: "auto", intensidad: 1 };
 app.locals.despacharEvento = () => {};
+app.locals.publicarEventoMqtt = () => {};
 
 function registrarLog(...args) {
   const nivel = process.env.LOG_NIVEL || "info";
@@ -37,6 +39,9 @@ function registrarLog(...args) {
 }
 let emitirEventoWs = () => {};
 let cerrarWs = () => {};
+// Huellas para evitar reenviar a Mongo/WS lo mismo que acabamos de publicar en MQTT
+const huellasPublicadasLocalmente = new Set();
+const TTL_HUELLA_MS = 5000;
 
 app.use("/api/events", rutasEventos);
 app.use("/api/config", rutasConfig);
@@ -75,10 +80,16 @@ function inicializarMqtt() {
     });
   });
 
+  // Manejo de mensajes entrantes desde MQTT
   clienteMqtt.on("message", async (topic, payload) => {
     try {
       const texto = payload.toString();
       registrarLog("Mensaje MQTT recibido", topic, texto);
+      if (huellasPublicadasLocalmente.has(texto)) {
+        huellasPublicadasLocalmente.delete(texto);
+        registrarLog("Ignorando eco MQTT de mensaje publicado por el backend");
+        return;
+      }
       let cuerpo = {};
       try {
         cuerpo = JSON.parse(texto);
@@ -109,11 +120,35 @@ function publicarComandoMqtt(comando) {
     return;
   }
   const mensaje = JSON.stringify(comando);
+  // Enviamos comandos hacia el ESP32
   clienteMqtt.publish(mqttTopicComandos, mensaje, { qos: 0 }, (err) => {
     if (err) {
       registrarLog("Error publicando comando MQTT", err.message);
     } else {
       registrarLog("Comando reenviado a MQTT", mqttTopicComandos, mensaje);
+    }
+  });
+}
+
+function publicarEventoMqtt(payloadEvento) {
+  if (!clienteMqtt || !clienteMqtt.connected) {
+    registrarLog("MQTT no disponible para publicar evento");
+    return;
+  }
+  const mensaje =
+    typeof payloadEvento === "string"
+      ? payloadEvento
+      : JSON.stringify(payloadEvento || {});
+
+  // Guardamos huella breve para no reprocesar el eco del broker
+  huellasPublicadasLocalmente.add(mensaje);
+  setTimeout(() => huellasPublicadasLocalmente.delete(mensaje), TTL_HUELLA_MS);
+
+  clienteMqtt.publish(mqttTopicEventos, mensaje, { qos: 0 }, (err) => {
+    if (err) {
+      registrarLog("Error publicando evento MQTT", err.message);
+    } else {
+      registrarLog("Evento reenviado a MQTT", mqttTopicEventos, mensaje);
     }
   });
 }
@@ -127,6 +162,7 @@ async function iniciar() {
       registrarLog(`API HTTP escuchando en puerto ${puertoHttp}`);
     });
 
+    // Arranca servidor WS y expone callbacks en locals
     const instanciaWs = iniciarServidorWebSocket({
       puertoWs,
       publicarComandoMqtt,
@@ -136,6 +172,7 @@ async function iniciar() {
     emitirEventoWs = instanciaWs.emitirEventoWs;
     cerrarWs = instanciaWs.cerrarWs;
     app.locals.despacharEvento = emitirEventoWs;
+    app.locals.publicarEventoMqtt = publicarEventoMqtt;
 
     inicializarMqtt();
   } catch (error) {

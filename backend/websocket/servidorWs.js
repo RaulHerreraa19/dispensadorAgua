@@ -6,6 +6,7 @@ function iniciarServidorWebSocket({
   registrarLog,
   registrarEvento,
 }) {
+  // Conjunto de clientes WS conectados
   const clientesWs = new Set();
   const servidorWs = new WebSocket.Server({ port: puertoWs });
 
@@ -13,6 +14,7 @@ function iniciarServidorWebSocket({
     clientesWs.add(socket);
     registrarLog("Cliente WS conectado. Total:", clientesWs.size);
 
+    // Mensaje de bienvenida al conectar
     socket.send(
       JSON.stringify({
         tipo: "sistema",
@@ -28,6 +30,7 @@ function iniciarServidorWebSocket({
         if (esComando) {
           registrarLog("Comando recibido por WS:", contenido);
           const comandoNormalizado = { ...contenido, tipo: "command" };
+          // Pasamos el comando al canal MQTT
           publicarComandoMqtt(comandoNormalizado);
           if (registrarEvento) {
             try {
@@ -57,6 +60,7 @@ function iniciarServidorWebSocket({
   });
 
   function emitirEventoWs(eventoPlano) {
+    // Broadcasting de eventos a todos los clientes WS vivos
     const mensaje = JSON.stringify({ tipo: "evento", datos: eventoPlano });
     for (const cliente of clientesWs) {
       if (cliente.readyState === WebSocket.OPEN) {

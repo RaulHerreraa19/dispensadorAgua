@@ -26,8 +26,8 @@ services:
     environment:
       - MONGO_URI=mongodb://mongo:27017/dispensador_db
       - MQTT_URL=mqtt://test.mosquitto.org
-      - MQTT_TOPIC_EVENTS=dispensador/events
-      - MQTT_TOPIC_COMMANDS=dispensador/commands
+      - MQTT_TOPIC_EVENTS=/TX_ESLI
+      - MQTT_TOPIC_COMMANDS=/RX_ESLI
 
   frontend:
     build: ./frontend
@@ -36,7 +36,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:80"
+      - "8081:80"
 
 networks:
   default:

@@ -3,6 +3,7 @@ const Event = require("../models/Event");
 async function listarEventos(req, res) {
   try {
     const limite = Number(req.query.limite) || 50;
+    // Últimos eventos persistidos en Mongo
     const eventos = await Event.find().sort({ creadoEn: -1 }).limit(limite);
     res.json({ ok: true, eventos });
   } catch (error) {
@@ -14,6 +15,8 @@ async function listarEventos(req, res) {
 async function crearEvento(req, res) {
   try {
     const datosEntrada = req.body || {};
+    const publicarEventoMqtt = req.app.locals.publicarEventoMqtt || (() => {});
+    // Persistimos el evento tal cual llega
     const nuevoEvento = await Event.create({
       tipo: datosEntrada.tipo || "desconocido",
       origen: datosEntrada.origen || "api",
@@ -21,7 +24,11 @@ async function crearEvento(req, res) {
     });
 
     const despacharEvento = req.app.locals.despacharEvento || (() => {});
+    // Notificamos por WebSocket a clientes conectados
     despacharEvento(nuevoEvento.toObject());
+
+    // Reenviamos el payload original a MQTT
+    publicarEventoMqtt(datosEntrada);
 
     res.status(201).json({ ok: true, evento: nuevoEvento });
   } catch (error) {
